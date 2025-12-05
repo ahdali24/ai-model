@@ -1,0 +1,99 @@
+!pip install pandas scikit-learn imbalanced-learn joblib fastapi uvicorn -q
+import pandas as pd
+
+CSV_PATH = "/content/Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv"
+
+# ; بنقرأ الملف بفاصلة 
+df = pd.read_csv(CSV_PATH, sep=';', engine='python')
+
+print("عدد الصفوف:", len(df))
+print("أول 5 صفوف:")
+display(df.head())
+
+print("أسماء الأعمدة ):")
+print(df.columns[:].tolist())
+feature_cols = [
+    "Destination Port",
+    "Flow Duration",
+    "Init_Win_bytes_forward",
+    "Init_Win_bytes_backward",
+    "Subflow Fwd Bytes",
+    "Subflow Bwd Bytes",
+    "act_data_pkt_fwd",
+    "min_seg_size_forward"
+]
+
+# لو بعض الأعمدة مش موجودة، هنشيلها أو نضيف بدائل تلقائياً
+feature_cols = [c for c in feature_cols if c in df.columns]
+print("هنستخدم الميزات دي:", feature_cols)
+
+# نلاقي عمود الـ label
+target_col = None
+for cand in ["Label", " label", "Attack", "class", "Flow Label"]:
+    if cand in df.columns:
+        target_col = cand
+        break
+print("عمود التارجت (label) المستخدم:", target_col)
+df.columns = df.columns.str.strip()
+print(df.columns.tolist())
+feature_cols = [
+    "Destination Port",
+    "Flow Duration",
+    "Init_Win_bytes_forward",
+    "Init_Win_bytes_backward",
+    "Subflow Fwd Bytes",
+    "Subflow Bwd Bytes",
+    "act_data_pkt_fwd",
+    "min_seg_size_forward"
+]
+
+target_col = "Label"
+
+X = df[feature_cols].copy()
+y_raw = df[target_col].copy()
+X = df[feature_cols].copy()
+y_raw = df[target_col].copy()
+
+# نحول Benign إلى 0، والباقي 1
+y = y_raw.apply(lambda x: 0 if str(x).strip().lower() == "benign" else 1)
+
+# تحويل الأرقام
+X = X.apply(pd.to_numeric, errors='coerce')
+
+# نشوف القيم الفاضية
+print("نسبة القيم الفاضية لكل feature:")
+print(X.isna().mean())
+
+# نعوض القيم الفاضية بالمتوسط
+X = X.fillna(X.mean())
+
+print("تم تجهيز البيانات بنجاح ")
+from sklearn.preprocessing import StandardScaler
+from imblearn.under_sampling import RandomUnderSampler
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# نحاول نعمل undersample لتوازن الفئات (بسيط وفعّال للبدء)
+rus = RandomUnderSampler(random_state=42)
+X_res, y_res = rus.fit_resample(X_scaled, y)
+
+print("شكل البيانات بعد الresample:", X_res.shape)
+print("توزيع الكلاسات بعد الresample:", dict(zip(*np.unique(y_res, return_counts=True))))
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
+
+X_train, X_test, y_train, y_test = train_test_split(X_res, y_res, test_size=0.25, random_state=42, stratify=y_res)
+
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+print("Accuracy:", accuracy_score(y_test, y_pred))
+print("Confusion Matrix:\n", confusion_matrix(y_test, y_pred))
+print("Classification Report:\n", classification_report(y_test, y_pred))
+import joblib
+joblib.dump(model, "/content/rf_cicids_model.joblib")
+joblib.dump(scaler, "/content/scaler.joblib")
+print("تم حفظ الموديل وملف الـ scaler في المجلد /content/")
